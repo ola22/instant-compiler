@@ -16,6 +16,7 @@ import Instant.AbsInstant
 import Instant.ErrM
 import ErrorCheck.ErrorChecker
 
+
 type ParseType a = [Token] -> Err a
 -- (max stack usage, max locals number, instructions, {var->ref})
 type Store = (Integer, Integer, String, M.Map Ident Integer)
@@ -146,7 +147,7 @@ compileTree (Prog (h:t)) = do
 -- Function compiles given statement
 compileStmt :: Stmt -> Env ()
 compileStmt (SAss var e) = do
-  (stack, ress') <- compileExp e
+  (_, ress') <- compileExp e
   (max_stack, l, ress, s) <- get
   let var_ref = M.lookup var s
   case var_ref of
@@ -196,7 +197,6 @@ getMaxStackAndRes :: String -> Exp -> Exp -> Env (Integer, String)
 getMaxStackAndRes s e1 e2 = do
   (stack1, res1) <- compileExp e1
   (stack2, res2) <- compileExp e2
-  (max_stack, l, ress, store) <- get
   let op = "    " ++ s ++ "\n"
   let d1 = max stack1 (stack2 + 1)
   let d2 = max stack2 (stack1 + 1)
@@ -204,10 +204,6 @@ getMaxStackAndRes s e1 e2 = do
   return (if d1 <= d2 then (d1, res1 ++ res2 ++ op)
     else (stack2, res2 ++ res1 ++ 
       (if ((makeSwap s) == False) then "" else "    swap\n") ++ op))
-  {-return (if stack1 == stack2 then (stack1 + 1, res1 ++ res2 ++ op)
-    else if stack1 > stack2 then (stack1, res1 ++ res2 ++ op)
-    else (stack2, res2 ++ res1 ++ 
-      (if ((makeSwap s) == False) then "" else "    swap\n") ++ op))-}
 
 
 main :: IO ()

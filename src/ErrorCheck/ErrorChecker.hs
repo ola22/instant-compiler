@@ -7,7 +7,6 @@ import qualified Data.Set as S
 import Instant.AbsInstant
 
 
-
 type VarsSet = S.Set Ident
 
 

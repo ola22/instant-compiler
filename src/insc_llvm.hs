@@ -17,27 +17,12 @@ import Instant.ErrM
 import ErrorCheck.ErrorChecker
 
 
-
 type ParseType a = [Token] -> Err a
 type Register = String
 -- (output file, last used reister's numb, {var -> register})
 type Store = (FilePath, Integer, M.Map Ident Register)
 type Env = StateT Store IO
 
-{-
-TODO:
-potestowac na studentsie
-readme
-zobacztc co z tym wygenerowanym kodem tych modulow
-  wywalic ta funkcje startCompilation calkiem 
-
-zobaczyc co z tym wygenerowanym kodem tych modulow
-  ZMIENIC KATALOG INSTANT NA PARSING, CZY COS???
-README
-  ODPALANIE
-  odsmiecic katalogi projektu (np tester i z instant to tester.hs)
-  MAKEA DOROBIC KTORY KOPIUJE DO KORZENIA :o
--}
 
 
 -- Function reads file with input program and passes
