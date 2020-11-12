@@ -18,40 +18,36 @@ import ErrorCheck.ErrorChecker
 
 
 
-type ParseType a = [Token] -> Err a                  -- O CO TU WGL CHODZI????????
+type ParseType a = [Token] -> Err a
 type Register = String
--- outfile, last used reister's numb .variable -> register
+-- (output file, last used reister's numb, {var -> register})
 type Store = (FilePath, Integer, M.Map Ident Register)
 type Env = StateT Store IO
 
 {-
 TODO:
-moze ten typ mieszany do wyboru i pattern matching
-nazwy wszsystkie
-  f do stora
-  ten błąd kompilacji
-  nazwy rejestrow
-potestowac
-poodpalac
-na studentsie zbudowac
-komentarze
-
-wywalic ta funkcje startCompilation calkiem 
+potestowac na studentsie
+readme
+zobacztc co z tym wygenerowanym kodem tych modulow
+  wywalic ta funkcje startCompilation calkiem 
 
 zobaczyc co z tym wygenerowanym kodem tych modulow
-ZMIENIC KATALOG INSTANT NA PARSING, CZY COS???
+  ZMIENIC KATALOG INSTANT NA PARSING, CZY COS???
 README
-ODPALANIE
-odsmiecic katalogi projektu (np tester i z instant to tester.hs)
-MAKEA DOROBIC KTORY KOPIUJE DO KORZENIA :o
+  ODPALANIE
+  odsmiecic katalogi projektu (np tester i z instant to tester.hs)
+  MAKEA DOROBIC KTORY KOPIUJE DO KORZENIA :o
 -}
 
 
-
+-- Function reads file with input program and passes
+-- it to parseFunction
 getFile :: ParseType Program -> FilePath -> IO ()
 getFile p f = readFile f >>= parseFile p f
 
 
+-- Function parses given program, then checks if there are
+-- any compilation errors and finally starts compilation
 parseFile :: ParseType Program -> FilePath -> String -> IO()
 parseFile p f prog_s = 
   let ts = myLexer prog_s in 
@@ -71,12 +67,14 @@ parseFile p f prog_s =
                         return ()
 
 
+-- Function starts compilatipn in StateT monad
 startCompilation :: Program -> String -> IO ()
 startCompilation p outfile = do
   evalStateT (compileTree p) (outfile, 1, M.empty)
   return ()
 
 
+-- Function compiles whole program, Stmt by Stmt
 compileTree :: Program -> Env ()
 compileTree (Prog []) = return ()
 compileTree (Prog (h:t)) = do
@@ -84,16 +82,19 @@ compileTree (Prog (h:t)) = do
   compileTree (Prog t)
 
 
+-- Function compiles given statement
 compileStmt :: Stmt -> Env ()
 compileStmt (SAss var e) = do
   exp_val <- compileExp e
   (f, n, s) <- get
   let var_reg = M.lookup var s
   case var_reg of
+    -- variable already declared
     Just r -> do 
       liftIO $ (appendFile f) $ "    store i32 " 
         ++ exp_val ++ ", i32* " ++ r ++ "\n"
       return ()
+    -- variable declared for the first time
     Nothing -> do
       liftIO $ (appendFile f) $ "    %r" ++ (show n) ++ 
         " = alloca i32" ++ "\n"
@@ -109,11 +110,13 @@ compileStmt (SExp e) = do
   return ()
 
 
+-- Function compiles single expression, it returns a register
+-- in which it put result
 compileExp :: Exp -> Env (Register)
 compileExp (ExpAdd e1 e2) = getResultRegister "add" e1 e2
 compileExp (ExpSub e1 e2) = getResultRegister "sub" e1 e2
 compileExp (ExpMul e1 e2) = getResultRegister "mul" e1 e2
-compileExp (ExpDiv e1 e2) = getResultRegister "udiv" e1 e2
+compileExp (ExpDiv e1 e2) = getResultRegister "sdiv" e1 e2
 compileExp (ExpLit x) = return (show x)
 compileExp (ExpVar var) = do
   (f, n, s) <- get
@@ -127,6 +130,8 @@ compileExp (ExpVar var) = do
     Nothing -> return ("error")
 
 
+-- Function processes arithmetic operations, it returns a 
+-- register in which it put result
 getResultRegister :: String -> Exp -> Exp -> Env (Register)
 getResultRegister s e1 e2 = do
   val1 <- compileExp e1
@@ -141,14 +146,17 @@ getResultRegister s e1 e2 = do
 main :: IO ()
 main = do
   args <- getArgs
-
   case args of
     -- given no arguments
     [] -> do
-      putStrLn "Invalid number of arguments, usage: insc_llvm <filename>"
-    file -> do
-      getFile pProgram (head file)
-      callCommand ("llvm-as -o temp.bc " ++  (dropExtension (head file)) ++ ".ll")
-      callCommand ("llvm-link -o " ++  (dropExtension (head file)) 
+      putStrLn "Given no arguments to program, usage: insc_llvm <filename>"
+    (f:[]) -> do
+      getFile pProgram f
+      callCommand ("llvm-as -o temp.bc " ++  (dropExtension f) ++ ".ll")
+      callCommand ("llvm-link -o " ++  (dropExtension f) 
         ++ ".bc temp.bc lib/runtime.bc")
       callCommand ("rm temp.bc")
+    -- given too many arguments
+    _ -> do
+      putStrLn "Invalid number of arguments, usage: insc_jvm <filename>"
+

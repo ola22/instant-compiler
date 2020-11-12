@@ -16,20 +16,15 @@ import Instant.AbsInstant
 import Instant.ErrM
 import ErrorCheck.ErrorChecker
 
-type ParseType a = [Token] -> Err a                  -- O CO TU WGL CHODZI????????
--- type Store = (Integer, Integer, resstring, M.Map)
--- limitStack, maxlocals, resstring, {var->ref}
+type ParseType a = [Token] -> Err a
+-- (max stack usage, max locals number, instructions, {var->ref})
 type Store = (Integer, Integer, String, M.Map Ident Integer)
---type Env = StateT Store IO
 type Env = StateT Store IO
 
-{-
-makefile
-to z tym odpalaniem, binarka itd
-chyba wywalimy max stack ze srodowiska:o 
--}
 
 
+-- Functions below return proper jvm's instructions
+-- for size of given variable
 giveConst :: Integer -> String
 giveConst x 
         | x == -1 = "    iconst_m1 "
@@ -38,12 +33,10 @@ giveConst x
         | x >= -32768 && x <= 32767 = "    sipush " ++ show x
         | otherwise = "    ldc " ++ show x
 
-
 giveLoad :: Integer -> String
 giveLoad x
         | x >= 0 && x <=3 = "    iload_" ++ show x
         | otherwise = "    iload " ++ show x
-
 
 giveStore :: Integer -> String
 giveStore x
@@ -51,18 +44,11 @@ giveStore x
         | otherwise = "    istore " ++ show x
 
 
-makeSwap :: String -> Bool
-makeSwap s
-        | s == "iadd" = False
-        | s == "isub" = True
-        | s == "imul" = False
-        | s == "idiv" = True
-        | otherwise = True
-
-
+-- Functions below count the maximum stack usage
 countMaxStmtDepth :: Program -> Integer
 countMaxStmtDepth (Prog []) = 0
-countMaxStmtDepth (Prog (h:t)) = max (countStmtDepth h) (countMaxStmtDepth (Prog t))
+countMaxStmtDepth (Prog (h:t)) = max (countStmtDepth h) 
+  (countMaxStmtDepth (Prog t))
 
 countStmtDepth :: Stmt -> Integer
 countStmtDepth (SAss _ e) = countExpDepth e
@@ -73,8 +59,8 @@ countExpDepth (ExpAdd e1 e2) = getCount e1 e2
 countExpDepth (ExpSub e1 e2) = getCount e1 e2
 countExpDepth (ExpMul e1 e2) = getCount e1 e2
 countExpDepth (ExpDiv e1 e2) = getCount e1 e2
-countExpDepth (ExpLit x) = 1
-countExpDepth (ExpVar var) = 1
+countExpDepth (ExpLit _) = 1
+countExpDepth (ExpVar _) = 1
 
 getCount :: Exp -> Exp -> Integer
 getCount e1 e2 = 
@@ -85,96 +71,111 @@ getCount e1 e2 =
     else res2
 
 
+-- Function returns True if given operation
+-- is commutative
+makeSwap :: String -> Bool
+makeSwap s
+        | s == "iadd" = False
+        | s == "isub" = True
+        | s == "imul" = False
+        | s == "idiv" = True
+        | otherwise = True
 
+
+-- Function reads file with input program and passes
+-- it to parseFunction
 getFile :: ParseType Program -> FilePath -> IO ()
 getFile p f = readFile f >>= parseFile p f
 
 
+-- Function parses given program, then checks if there are
+-- any compilation errors and finally starts compilation
 parseFile :: ParseType Program -> FilePath -> String -> IO()
 parseFile p f prog_s = 
   let ts = myLexer prog_s in 
     case p ts of
+      -- parsing error
       Bad err -> do putStrLn "\nParsing failed:"
                     putStrLn err
                     exitFailure
+      -- parsing succeded
       Ok tree -> do (is_ok, _) <- checkCompileErrors tree S.empty
                     case is_ok of
+                      -- compilation error
                       False -> exitFailure
                       True -> do
                         let outfile = (dropExtension f) ++ ".j"
-                        let max_stack = countMaxStmtDepth tree                        -- TU ZMINANA
-                        startCompilation tree max_stack outfile                        -- TU ZMIANA
+                        let max_stack = countMaxStmtDepth tree
+                        startCompilation tree max_stack outfile
                         return ()
                         
 
-startCompilation :: Program -> Integer -> FilePath -> IO ()                          -- TU ZMIANA
-startCompilation p stack outfile = do
-  evalStateT (getCompilationCode p stack outfile) (1, 1, "", M.empty)
+-- Function starts compilatipn in StateT monad
+startCompilation :: Program -> Integer -> FilePath -> IO ()
+startCompilation p max_stack outfile = do
+  evalStateT (getCompilationCode p outfile) (max_stack, 1, "", M.empty)
   return ()
 
 
-getCompilationCode :: Program -> Integer -> FilePath -> Env ()
-getCompilationCode p max_stack f = do
-  -- pocztek do pliku
+-- Function writes whole output to file 
+getCompilationCode :: Program -> FilePath -> Env ()
+getCompilationCode p f = do
+  -- adding jvm file's beginning
   liftIO $ writeFile f $ ".class public " ++ (takeBaseName f)
     ++ "\n.super java/lang/Object\n\n.method public <init>()V\n"
     ++ "    aload_0\n    invokespecial java/lang/Object/<init>()V\n"
     ++ "    return\n.end method\n"
-    ++ "\n.method public static main([Ljava/lang/String;)V\n"
-  compileTree p max_stack
-  (stack, maxlocals, res, _) <- get
-  -- koniec do pliku i wszytskie instaurkcje
+    ++ "\n.method public static main([Ljava/lang/String;)V\n" 
+  compileTree p
+  (max_stack, maxlocals, res, _) <- get
+  -- adding all instructions and jvm file's beginning
   liftIO $ appendFile f $ ".limit stack " ++ (show max_stack)
     ++ "\n.limit locals " ++ (show maxlocals) ++ "\n" ++ res
     ++ "    return\n.end method"
   return ()
 
 
-compileTree :: Program -> Integer -> Env ()
-compileTree (Prog []) _ = return ()
-compileTree (Prog (h:t)) stack = do
-  compileStmt h stack
-  compileTree (Prog t) stack
+-- Function compiles whole program, Stmt by Stmt
+compileTree :: Program -> Env ()
+compileTree (Prog []) = return ()
+compileTree (Prog (h:t)) = do
+  compileStmt h
+  compileTree (Prog t)
 
 
--- returns i monad maxstack, resstring
-compileStmt :: Stmt -> Integer -> Env ()
-compileStmt (SAss var e) _ = do
-  (max_stack', ress') <- compileExp e
+-- Function compiles given statement
+compileStmt :: Stmt -> Env ()
+compileStmt (SAss var e) = do
+  (stack, ress') <- compileExp e
   (max_stack, l, ress, s) <- get
   let var_ref = M.lookup var s
   case var_ref of
+    -- variable already declared
     Just r -> do 
       let new_res = ress ++ ress' ++ (giveStore r) ++ "\n"
-      put (max max_stack max_stack', l, new_res, s)
+      put (max_stack, l, new_res, s)
       return ()
+    -- variable declared for the first time
     Nothing -> do
       let new_res = ress ++ ress' ++ (giveStore l) ++ "\n"
-      put (max max_stack max_stack', l + 1, new_res, M.insert var l s)
+      put (max_stack, l + 1, new_res, M.insert var l s)
       return ()
-compileStmt (SExp e) stack = do
-  (max_stack', ress') <- compileExp e
+compileStmt (SExp e) = do
+  (stack, ress') <- compileExp e
   (max_stack, l, ress, s) <- get
-  -- wypisac
-  {-let new_ress = ress ++ "    getstatic java/lang/System/out Ljava/io/PrintStream;\n"
-          ++ ress' ++ "    invokevirtual java/io/PrintStream/println(I)V\n"                 -- czemu oni robia tu swapa?????????????
-  -}
-  let new_ress = if max_stack' >= stack then (ress
-          ++ ress' ++ "    getstatic java/lang/System/out Ljava/io/PrintStream;\n" ++
-          "    swap\n" ++ "    invokevirtual java/io/PrintStream/println(I)V\n")
+  -- optimalizing swap's number and stack usage
+  let new_ress = if stack >= max_stack then (ress ++ ress' ++ 
+        "    getstatic java/lang/System/out Ljava/io/PrintStream;\n" ++
+        "    swap\n" ++ "    invokevirtual java/io/PrintStream/println(I)V\n")
                 else (ress ++ "    getstatic java/lang/System/out Ljava/io/PrintStream;\n"
-          ++ ress' ++ "    invokevirtual java/io/PrintStream/println(I)V\n")
-
-  {-let new_ress = ress     -- TODO IF glebokosc jest 1
-          ++ ress' ++ "    getstatic java/lang/System/out Ljava/io/PrintStream;\n" ++
-          "    swap\n" ++ "    invokevirtual java/io/PrintStream/println(I)V\n"-}
-  let max_stack'' = max 2 max_stack'
-  put (max max_stack max_stack'', l, new_ress, s)
-  --put (max max_stack (max_stack' + 1), l, new_ress, s)
+        ++ ress' ++ "    invokevirtual java/io/PrintStream/println(I)V\n")
+  put (max_stack, l, new_ress, s)
   return ()
   
 
-compileExp :: Exp -> Env (Integer, String)  -- byc moze cos zwraca
+-- Function compiles single expression, it returns a pair
+-- (stack usage, instructions)
+compileExp :: Exp -> Env (Integer, String)
 compileExp (ExpAdd e1 e2) = getMaxStackAndRes "iadd" e1 e2
 compileExp (ExpSub e1 e2) = getMaxStackAndRes "isub" e1 e2
 compileExp (ExpMul e1 e2) = getMaxStackAndRes "imul" e1 e2
@@ -189,58 +190,37 @@ compileExp (ExpVar var) = do
     Nothing -> return (0, "error")
 
 
+-- Function processes arithmetic operations, it returns a pair
+-- (stack usage, instructions)
 getMaxStackAndRes :: String -> Exp -> Exp -> Env (Integer, String)
 getMaxStackAndRes s e1 e2 = do
   (stack1, res1) <- compileExp e1
   (stack2, res2) <- compileExp e2
   (max_stack, l, ress, store) <- get
   let op = "    " ++ s ++ "\n"
-  {-if stack1 == stack2 then (return (stack1 + 1, res1 ++ res2 ++ op))
-  else ()-}
-  --let ss = if ((makeSwap s) == False) then "" else "    swap\n"
-  return (if stack1 == stack2 then (stack1 + 1, res1 ++ res2 ++ op)
+  let d1 = max stack1 (stack2 + 1)
+  let d2 = max stack2 (stack1 + 1)
+  -- optimalizing stack usage
+  return (if d1 <= d2 then (d1, res1 ++ res2 ++ op)
+    else (stack2, res2 ++ res1 ++ 
+      (if ((makeSwap s) == False) then "" else "    swap\n") ++ op))
+  {-return (if stack1 == stack2 then (stack1 + 1, res1 ++ res2 ++ op)
     else if stack1 > stack2 then (stack1, res1 ++ res2 ++ op)
-    else (stack2, res2 ++ res1 ++ (if ((makeSwap s) == False) then "" else "    swap\n") ++ op))
-  
-  {-if (max stack1 (stack2 + 1) > max stack2 (stack1 + 1)) then 
-    (return (stack1, res1 ++ res2 ++ op))
-  else
-    (return (stack2,  res2 ++ res1 ++ (if (makeSwap s) == True then "    swap\n" else "") ++ op))  -- niepotrzebne swapy bo pewnie to nie warunek zamiany
-  -}
-  --return (get)
+    else (stack2, res2 ++ res1 ++ 
+      (if ((makeSwap s) == False) then "" else "    swap\n") ++ op))-}
+
 
 main :: IO ()
 main = do
   args <- getArgs
-
   case args of
     -- given no arguments
     [] -> do
-      putStrLn "Invalid number of arguments, usage: insc_llvm <filename>"
-    file -> do
-      getFile pProgram (head file)
-      --callProcess "java" ["-jar", "libs/jasmin.jar", extensionToJ $ head fs, "-d", takeDirectory $ head fs]
-      callCommand ("java -jar lib/jasmin.jar " ++ (dropExtension $ head file) ++ ".j -d " ++ (takeDirectory $ head file))
-
-
-
-{-
-mamy dwa poddrzewa i ktore najpierw, ktore potem
-lewe stos d1
-prawe stos d2
-wynik
-rozmiar stosu : max d1 (d2+1)
-
-co by sie dzialo gdyby najpierw drugie:
-max d2, d1+1    !!
-
-jak max (d1, d2+1) > niz drugi  to teraz + i * sa przemienne
-
-
-zmienne:
-referencja i laduje z referencji o danym numerze -> daklaracja zmiennej to referencja do środowiska kolejne liczby naturalne
-deklaracja referencja trzyma liczbe istore (zapsiuje liczbe z gory stosu do) -> assignment (push na stos warotosc, a istore do ref)
-odwolanei do zmiennej iload
-
-java bitecode inst listings
--}
+      putStrLn "Given no arguments to program, usage: insc_jvm <filename>"
+    (f:[]) -> do
+      getFile pProgram f
+      callCommand ("java -jar lib/jasmin.jar " ++ (dropExtension f) 
+        ++ ".j -d " ++ (takeDirectory f))
+    -- given too many arguments
+    _ -> do
+      putStrLn "Invalid number of arguments, usage: insc_jvm <filename>"

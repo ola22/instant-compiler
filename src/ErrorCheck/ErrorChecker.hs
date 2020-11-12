@@ -12,7 +12,8 @@ type VarsSet = S.Set Ident
 
 
 
-
+-- Functions below checks if there are any compilation errors
+-- (undeclared variables)
 checkCompileErrors :: Program -> VarsSet -> IO ((Bool, VarsSet))
 checkCompileErrors (Prog []) vars = return (True, vars)
 checkCompileErrors (Prog (h:t)) vars = do 
@@ -37,7 +38,7 @@ checkStmt (SExp e) vars = do
                             return (res, vars)
         (ExpLit _) -> return ((True, vars))
         (ExpAdd e1 e2) -> do
-            (b1, _) <- checkStmt (SExp e1) vars --- bo tu napewno nic nie dodam do seta
+            (b1, _) <- checkStmt (SExp e1) vars
             (b2, _) <- checkStmt (SExp e2) vars
             return ((b1 && b2, vars))
         (ExpSub e1 e2) -> do
